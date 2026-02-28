@@ -5,6 +5,10 @@ import * as fsPromises from 'fs/promises'
 import * as pathModule from 'path'
 import type { ClaudeMessage, ClaudeToolCall, ClaudeSessionState } from '../src/types/claude-agent'
 import type { Query, PermissionMode, CanUseTool, SlashCommand } from '@anthropic-ai/claude-agent-sdk'
+
+// App-level permission mode extends SDK's PermissionMode with planBypass
+// planBypass = plan mode (read-only exploration) + auto-approve all tool permissions
+type AppPermissionMode = PermissionMode | 'planBypass'
 import { broadcastHub } from './remote/broadcast-hub'
 
 // Lazy import the SDK (it's an ES module)
@@ -100,7 +104,7 @@ interface SessionInstance {
   queryInstance?: Query
   pendingPermissions: Map<string, PendingRequest>
   pendingAskUser: Map<string, PendingRequest>
-  permissionMode: PermissionMode
+  permissionMode: AppPermissionMode
   effort: 'low' | 'medium' | 'high' | 'max'
   enable1MContext: boolean
   messageQueue: QueuedMessage[]
@@ -164,7 +168,7 @@ export class ClaudeAgentManager {
     this.send('claude:tool-result', sessionId, { id: toolId, ...updates })
   }
 
-  async startSession(sessionId: string, options: { cwd: string; prompt?: string; sdkSessionId?: string; permissionMode?: PermissionMode }): Promise<boolean> {
+  async startSession(sessionId: string, options: { cwd: string; prompt?: string; sdkSessionId?: string; permissionMode?: AppPermissionMode }): Promise<boolean> {
     // Prevent duplicate session creation
     if (this.sessions.has(sessionId)) {
       return true
@@ -178,13 +182,12 @@ export class ClaudeAgentManager {
         isStreaming: false,
       }
 
-      // If an explicit SDK session ID was given (e.g. from /resume), store it
-      if (options.sdkSessionId) {
-        sdkSessionIds.set(sessionId, options.sdkSessionId)
+      // Only resume if explicitly requested (e.g. from /resume command)
+      // Don't auto-resume from sdkSessionIds — each new session starts fresh
+      const previousSdkSessionId = options.sdkSessionId || undefined
+      if (previousSdkSessionId) {
+        sdkSessionIds.set(sessionId, previousSdkSessionId)
       }
-
-      // Restore SDK session ID if we had one before (for resume after restart)
-      const previousSdkSessionId = sdkSessionIds.get(sessionId)
 
       this.sessions.set(sessionId, {
         abortController,
@@ -281,7 +284,7 @@ export class ClaudeAgentManager {
       const claudeCodePath = resolveClaudeCodePath()
       console.log(`[Claude] runQuery: cwd=${session.cwd}, resumeId=${resumeId || 'none'}, claudeCodePath=${claudeCodePath || 'none'}`)
       const canUseTool: CanUseTool = async (toolName, input, opts) => {
-        // Check if this is an AskUserQuestion tool
+        // Check if this is an AskUserQuestion tool — always show UI
         if (toolName === 'AskUserQuestion') {
           return new Promise((resolve) => {
             session.pendingAskUser.set(opts.toolUseID, { resolve })
@@ -290,6 +293,33 @@ export class ClaudeAgentManager {
               questions: (input as Record<string, unknown>).questions,
             })
           })
+        }
+
+        // In planBypass mode, auto-approve all tool calls except ExitPlanMode
+        // ExitPlanMode requires user confirmation before switching to bypass execution
+        if (session.permissionMode === 'planBypass') {
+          if (toolName === 'ExitPlanMode') {
+            return new Promise((resolve) => {
+              session.pendingPermissions.set(opts.toolUseID, {
+                resolve: (result: unknown) => {
+                  // On approval, switch to bypassPermissions for execution
+                  if ((result as { behavior: string }).behavior === 'allow') {
+                    session.permissionMode = 'bypassPermissions'
+                    this.send('claude:modeChange', sessionId, 'bypassPermissions')
+                  }
+                  resolve(result)
+                }
+              })
+              this.send('claude:permission-request', sessionId, {
+                toolUseId: opts.toolUseID,
+                toolName,
+                input,
+                suggestions: opts.suggestions,
+                decisionReason: 'Exit plan mode and switch to bypass execution?',
+              })
+            })
+          }
+          return { behavior: 'allow' }
         }
 
         // For all other tools, send permission request to frontend
@@ -306,12 +336,14 @@ export class ClaudeAgentManager {
       }
 
       const currentMode = session.permissionMode
+      // Map app-level planBypass to SDK's plan mode
+      const sdkMode: PermissionMode = currentMode === 'planBypass' ? 'plan' : currentMode
       const queryOptions: Record<string, unknown> = {
         abortController: session.abortController,
         cwd: session.cwd,
         systemPrompt: { type: 'preset', preset: 'claude_code' },
         tools: { type: 'preset', preset: 'claude_code' },
-        permissionMode: currentMode,
+        permissionMode: sdkMode,
         ...(currentMode === 'bypassPermissions' ? { allowDangerouslySkipPermissions: true } : {}),
         includePartialMessages: true,
         promptSuggestions: true,
@@ -423,11 +455,17 @@ export class ClaudeAgentManager {
                 })
                 // Detect plan mode transitions and notify UI
                 if (toolBlock.name === 'EnterPlanMode') {
-                  session.permissionMode = 'plan'
-                  this.send('claude:modeChange', sessionId, 'plan')
+                  // Preserve planBypass if already in it; otherwise set to plan
+                  if (session.permissionMode !== 'planBypass') {
+                    session.permissionMode = 'plan'
+                  }
+                  this.send('claude:modeChange', sessionId, session.permissionMode)
                 } else if (toolBlock.name === 'ExitPlanMode') {
-                  session.permissionMode = 'default'
-                  this.send('claude:modeChange', sessionId, 'default')
+                  // In planBypass, mode transition is handled by canUseTool approval flow
+                  if (session.permissionMode !== 'planBypass') {
+                    session.permissionMode = 'default'
+                    this.send('claude:modeChange', sessionId, 'default')
+                  }
                 }
               }
               if ('type' in block && block.type === 'tool_result') {
@@ -639,14 +677,16 @@ export class ClaudeAgentManager {
     return session?.state || null
   }
 
-  async setPermissionMode(sessionId: string, mode: PermissionMode): Promise<boolean> {
+  async setPermissionMode(sessionId: string, mode: AppPermissionMode): Promise<boolean> {
     const session = this.sessions.get(sessionId)
     if (!session) return false
     // Always track the mode on the session so the next runQuery picks it up
     session.permissionMode = mode
     if (!session.queryInstance) return true
     try {
-      await session.queryInstance.setPermissionMode(mode)
+      // Map app-level planBypass to SDK's plan mode
+      const sdkMode: PermissionMode = mode === 'planBypass' ? 'plan' : mode
+      await session.queryInstance.setPermissionMode(sdkMode)
       return true
     } catch (e) {
       console.warn('setPermissionMode failed:', e)
@@ -711,6 +751,12 @@ export class ClaudeAgentManager {
       console.warn('getSupportedCommands failed:', e)
       return []
     }
+  }
+
+  getSessionMeta(sessionId: string): Record<string, unknown> | null {
+    const session = this.sessions.get(sessionId)
+    if (!session) return null
+    return { ...session.metadata, permissionMode: session.permissionMode }
   }
 
   resolvePermission(sessionId: string, toolUseId: string, result: { behavior: string; updatedInput?: Record<string, unknown>; message?: string }): boolean {

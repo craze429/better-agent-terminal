@@ -13,10 +13,9 @@ interface MainPanelProps {
   onClose: (id: string) => void
   onRestart: (id: string) => void
   workspaceId?: string
-  lastSdkSessionId?: string
 }
 
-export function MainPanel({ terminal, isActive, onClose, onRestart, workspaceId, lastSdkSessionId }: Readonly<MainPanelProps>) {
+export function MainPanel({ terminal, isActive, onClose, onRestart, workspaceId }: Readonly<MainPanelProps>) {
   const isAgent = terminal.agentPreset && terminal.agentPreset !== 'none'
   const isClaudeCode = terminal.agentPreset === 'claude-code'
   const agentConfig = isAgent ? getAgentPreset(terminal.agentPreset!) : null
@@ -105,7 +104,6 @@ export function MainPanel({ terminal, isActive, onClose, onRestart, workspaceId,
             cwd={terminal.cwd}
             isActive={isActive}
             workspaceId={workspaceId}
-            savedSdkSessionId={lastSdkSessionId}
           />
         ) : (
           <TerminalPanel terminalId={terminal.id} isActive={isActive} />

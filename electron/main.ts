@@ -159,6 +159,18 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
   }
 
+  // Throttle window resize to reduce DWM pressure on Windows
+  // Windows sends high-frequency resize events during drag; software rendering can't keep up
+  let lastResizeTime = 0
+  mainWindow.on('will-resize', (event) => {
+    const now = Date.now()
+    if (now - lastResizeTime < 32) { // Cap at ~30fps
+      event.preventDefault()
+    } else {
+      lastResizeTime = now
+    }
+  })
+
   mainWindow.on('closed', () => {
     // Close all detached windows when main window closes
     for (const [, win] of detachedWindows) {
@@ -184,14 +196,9 @@ app.whenReady().then(async () => {
   buildMenu()
   createWindow()
 
-  // Handle --profile launch argument: set active profile so frontend loads it
+  // Handle --profile launch argument: expose to frontend without changing global state
   const profileArg = process.argv.find(a => a.startsWith('--profile='))
-  if (profileArg) {
-    const profileId = profileArg.split('=')[1]
-    if (profileId) {
-      await profileManager.setActiveProfileId(profileId)
-    }
-  }
+  const launchProfileId = profileArg ? profileArg.split('=')[1] || null : null
 
   // Listen for system resume from sleep/hibernate
   powerMonitor.on('resume', () => {
@@ -308,6 +315,7 @@ function registerProxiedHandlers() {
   registerHandler('claude:get-supported-models', (sessionId: string) => claudeManager?.getSupportedModels(sessionId))
   registerHandler('claude:get-account-info', (sessionId: string) => claudeManager?.getAccountInfo(sessionId))
   registerHandler('claude:get-supported-commands', (sessionId: string) => claudeManager?.getSupportedCommands(sessionId))
+  registerHandler('claude:get-session-meta', (sessionId: string) => claudeManager?.getSessionMeta(sessionId))
   registerHandler('claude:resolve-permission', (sessionId: string, toolUseId: string, result: { behavior: string; updatedInput?: Record<string, unknown>; message?: string }) => claudeManager?.resolvePermission(sessionId, toolUseId, result))
   registerHandler('claude:resolve-ask-user', (sessionId: string, toolUseId: string, answers: Record<string, string>) => claudeManager?.resolveAskUser(sessionId, toolUseId, answers))
   registerHandler('claude:list-sessions', (cwd: string) => claudeManager?.listSessions(cwd))
@@ -577,6 +585,9 @@ function registerLocalHandlers() {
   ipcMain.handle('profile:get', async (_event, profileId: string) => profileManager.getProfile(profileId))
   ipcMain.handle('profile:set-active', async (_event, profileId: string) => profileManager.setActiveProfileId(profileId))
   ipcMain.handle('profile:get-active-id', async () => profileManager.getActiveProfileId())
+
+  // Get the profile ID this instance was launched with (--profile= argument)
+  ipcMain.handle('app:get-launch-profile', () => launchProfileId)
 
   // Open new instance with a specific profile
   ipcMain.handle('app:open-new-instance', async (_event, profileId: string) => {

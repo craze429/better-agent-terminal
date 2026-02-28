@@ -70,6 +70,7 @@ export default function App() {
   useEffect(() => {
     document.title = `Better Terminal - ${activeProfileName}`
   }, [activeProfileName])
+  const [appNotification, setAppNotification] = useState<string | null>(null)
   const [envDialogWorkspaceId, setEnvDialogWorkspaceId] = useState<string | null>(null)
   // Snippet sidebar is always visible by default
   const [showSnippetSidebar] = useState(true)
@@ -140,10 +141,15 @@ export default function App() {
     })
 
     // Load saved workspaces and settings on startup
-    // If active profile is remote, try to connect; fall back to local on failure
+    // If launched with --profile, use that profile instead of the stored active one
     const initProfile = async () => {
+      const launchProfileId = await window.electronAPI.app.getLaunchProfile()
       const result = await window.electronAPI.profile.list()
-      const active = result.profiles.find(p => p.id === result.activeProfileId)
+      // Use launch profile if provided (new window), otherwise use stored active profile
+      const active = launchProfileId
+        ? result.profiles.find(p => p.id === launchProfileId)
+        : result.profiles.find(p => p.id === result.activeProfileId)
+
       if (active?.type === 'remote' && active.remoteHost && active.remoteToken) {
         // Try connecting to remote
         const connectResult = await window.electronAPI.remote.connect(
@@ -152,15 +158,17 @@ export default function App() {
           active.remoteToken
         )
         if ('error' in connectResult) {
-          // Connection failed — fall back to first local profile
+          if (launchProfileId) {
+            // New window launch failed — show error and close instead of corrupting shared state
+            setAppNotification(`Remote connection failed: ${connectResult.error}`)
+            setTimeout(() => window.close(), 3000)
+            return
+          }
+          // Main window: fall back to first local profile
           const localProfile = result.profiles.find(p => p.type !== 'remote')
           if (localProfile) {
             await window.electronAPI.profile.load(localProfile.id)
             setActiveProfileName(localProfile.name)
-          } else {
-            // No local profile available (new-window launch) — close window
-            window.close()
-            return
           }
         } else {
           setActiveProfileName(active.name)
@@ -168,6 +176,11 @@ export default function App() {
         }
       } else if (active?.type === 'remote') {
         // Remote profile missing connection info — fall back
+        if (launchProfileId) {
+          setAppNotification('Remote profile is missing connection info.')
+          setTimeout(() => window.close(), 3000)
+          return
+        }
         const localProfile = result.profiles.find(p => p.type !== 'remote')
         if (localProfile) {
           await window.electronAPI.profile.load(localProfile.id)
@@ -267,7 +280,7 @@ export default function App() {
         profile.remoteToken
       )
       if ('error' in connectResult) {
-        alert(`Remote connection failed: ${connectResult.error}\nSwitching back to local profile.`)
+        setAppNotification(`Remote connection failed: ${connectResult.error}\nSwitching back to local profile.`)
         // Fall back to first local profile
         const listResult = await window.electronAPI.profile.list()
         const localProfile = listResult.profiles.find(p => p.type !== 'remote')
@@ -436,6 +449,14 @@ export default function App() {
           onUpdate={(key: string, updates: Partial<EnvVariable>) => workspaceStore.updateWorkspaceEnvVar(envDialogWorkspaceId!, key, updates)}
           onClose={() => setEnvDialogWorkspaceId(null)}
         />
+      )}
+      {appNotification && (
+        <div className="app-notification-overlay" onClick={() => setAppNotification(null)}>
+          <div className="app-notification" onClick={e => e.stopPropagation()}>
+            <div className="app-notification-message">{appNotification}</div>
+            <button className="app-notification-close" onClick={() => setAppNotification(null)}>OK</button>
+          </div>
+        </div>
       )}
     </div>
   )

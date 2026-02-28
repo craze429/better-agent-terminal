@@ -62,7 +62,6 @@ interface ClaudeAgentPanelProps {
   cwd: string
   isActive: boolean
   workspaceId?: string
-  savedSdkSessionId?: string
 }
 
 interface AttachedImage {
@@ -75,7 +74,7 @@ type MessageItem = ClaudeMessage | ClaudeToolCall
 // Track sessions that have been started to prevent duplicate calls across StrictMode remounts
 const startedSessions = new Set<string>()
 
-export function ClaudeAgentPanel({ sessionId, cwd, isActive, workspaceId, savedSdkSessionId }: Readonly<ClaudeAgentPanelProps>) {
+export function ClaudeAgentPanel({ sessionId, cwd, isActive, workspaceId }: Readonly<ClaudeAgentPanelProps>) {
   const [messages, setMessages] = useState<MessageItem[]>([])
   const inputValueRef = useRef('')
   const [isStreaming, setIsStreaming] = useState(false)
@@ -410,12 +409,13 @@ export function ClaudeAgentPanel({ sessionId, cwd, isActive, workspaceId, savedS
         } else if (m.permissionMode) {
           setPermissionMode(m.permissionMode)
         }
-        // Persist SDK session ID for auto-resume (per-terminal + legacy per-workspace)
+        // Persist SDK session ID so /resume can find it later
         if (m.sdkSessionId) {
           workspaceStore.setTerminalSdkSessionId(sessionId, m.sdkSessionId)
           if (workspaceId) {
             workspaceStore.setLastSdkSessionId(workspaceId, m.sdkSessionId)
           }
+          workspaceStore.save()
         }
       }),
 
@@ -472,21 +472,29 @@ export function ClaudeAgentPanel({ sessionId, cwd, isActive, workspaceId, savedS
   }, [sessionId])
 
   // Start session on mount (guarded against StrictMode double-mount)
-  // If savedSdkSessionId exists, auto-resume that session
+  // Always create a fresh session — use /resume to manually restore a previous one
   useEffect(() => {
     if (!sessionStartedRef.current && !startedSessions.has(sessionId)) {
       sessionStartedRef.current = true
       startedSessions.add(sessionId)
-      if (savedSdkSessionId) {
-        window.electronAPI.claude.startSession(sessionId, { cwd, sdkSessionId: savedSdkSessionId, permissionMode: 'bypassPermissions' })
-      } else {
-        window.electronAPI.claude.startSession(sessionId, { cwd, permissionMode: 'bypassPermissions' })
-      }
+      window.electronAPI.claude.startSession(sessionId, { cwd, permissionMode: 'bypassPermissions' })
     }
     return () => {
       // Don't remove from startedSessions on unmount — StrictMode will remount
     }
-  }, [sessionId, cwd, savedSdkSessionId])
+  }, [sessionId, cwd])
+
+  // Refresh session metadata when panel becomes active (fixes stale display after window switch)
+  useEffect(() => {
+    if (isActive) {
+      window.electronAPI.claude.getSessionMeta(sessionId).then(meta => {
+        if (meta) {
+          setSessionMeta(meta as SessionMeta)
+          if ((meta as SessionMeta).model) setCurrentModel((meta as SessionMeta).model!)
+        }
+      }).catch(() => {})
+    }
+  }, [isActive, sessionId])
 
   // Fetch supported models, account info, and slash commands once session metadata arrives
   useEffect(() => {
@@ -667,19 +675,20 @@ export function ClaudeAgentPanel({ sessionId, cwd, isActive, workspaceId, savedS
     textareaRef.current?.focus()
   }, [sessionId, isStreaming])
 
-  const permissionModes = ['default', 'acceptEdits', 'bypassPermissions', 'plan'] as const
+  const permissionModes = ['default', 'acceptEdits', 'bypassPermissions', 'planBypass', 'plan'] as const
   const permissionModeLabels: Record<string, string> = {
     default: '\u270F Ask before edits',
     acceptEdits: '\u270F Auto-accept edits',
     bypassPermissions: '\u26A0 Bypass permissions',
+    planBypass: '\uD83D\uDCCB Plan (auto-approve)',
     plan: '\uD83D\uDCCB Plan mode',
   }
 
   const handlePermissionModeCycle = useCallback(async () => {
     const idx = permissionModes.indexOf(permissionMode as typeof permissionModes[number])
     const nextMode = permissionModes[(idx + 1) % permissionModes.length]
-    if (nextMode === 'bypassPermissions' && !settingsStore.getSettings().allowBypassPermissions) {
-      if (!window.confirm('Warning: bypassPermissions allows all tool calls without confirmation. Continue?')) {
+    if ((nextMode === 'bypassPermissions' || nextMode === 'planBypass') && !settingsStore.getSettings().allowBypassPermissions) {
+      if (!window.confirm('Warning: This mode allows tool calls without confirmation. Continue?')) {
         return
       }
     }
@@ -2251,9 +2260,18 @@ export function ClaudeAgentPanel({ sessionId, cwd, isActive, workspaceId, savedS
           )}
         </div>
         <div className="claude-statusline">
+          {sessionMeta?.sdkSessionId && (
+            <span
+              className="claude-statusline-item claude-statusline-clickable"
+              onClick={() => { navigator.clipboard.writeText(sessionMeta.sdkSessionId!) }}
+              title={`Session: ${sessionMeta.sdkSessionId}\nClick to copy`}
+            >
+              {sessionMeta.sdkSessionId.slice(0, 8)}
+            </span>
+          )}
           {sessionMeta && (
             <span className="claude-statusline-item" title={`in: ${sessionMeta.inputTokens.toLocaleString()} / out: ${sessionMeta.outputTokens.toLocaleString()}`}>
-              session: {(sessionMeta.inputTokens + sessionMeta.outputTokens).toLocaleString()} tok
+              {(sessionMeta.inputTokens + sessionMeta.outputTokens).toLocaleString()} tok
             </span>
           )}
           {sessionMeta && sessionMeta.numTurns > 0 && (

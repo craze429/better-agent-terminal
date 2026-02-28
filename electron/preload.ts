@@ -56,6 +56,7 @@ const electronAPI = {
   },
   app: {
     openNewInstance: (profileId: string) => ipcRenderer.invoke('app:open-new-instance', profileId),
+    getLaunchProfile: () => ipcRenderer.invoke('app:get-launch-profile') as Promise<string | null>,
   },
   update: {
     check: () => ipcRenderer.invoke('update:check'),
@@ -128,6 +129,8 @@ const electronAPI = {
       ipcRenderer.invoke('claude:get-account-info', sessionId) as Promise<{ email?: string; organization?: string; subscriptionType?: string } | null>,
     getSupportedCommands: (sessionId: string) =>
       ipcRenderer.invoke('claude:get-supported-commands', sessionId) as Promise<{ name: string; description: string; argumentHint: string }[]>,
+    getSessionMeta: (sessionId: string) =>
+      ipcRenderer.invoke('claude:get-session-meta', sessionId) as Promise<Record<string, unknown> | null>,
     resolvePermission: (sessionId: string, toolUseId: string, result: { behavior: string; updatedInput?: Record<string, unknown>; message?: string }) =>
       ipcRenderer.invoke('claude:resolve-permission', sessionId, toolUseId, result),
     resolveAskUser: (sessionId: string, toolUseId: string, answers: Record<string, string>) =>

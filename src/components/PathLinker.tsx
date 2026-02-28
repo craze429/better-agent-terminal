@@ -273,6 +273,13 @@ export function FilePreviewModal({ filePath, onClose }: FilePreviewModalProps) {
           </button>
           <button
             className="path-preview-btn"
+            onClick={() => window.electronAPI.shell.openPath(filePath)}
+            title="Open with system default app"
+          >
+            &#8599;
+          </button>
+          <button
+            className="path-preview-btn"
             onClick={() => { setSearchOpen(o => !o); setTimeout(() => searchInputRef.current?.focus(), 50) }}
             title="Search (Ctrl+F)"
           >

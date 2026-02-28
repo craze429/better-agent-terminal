@@ -30,6 +30,7 @@ interface ElectronAPI {
   }
   app: {
     openNewInstance: (profileId: string) => Promise<void>
+    getLaunchProfile: () => Promise<string | null>
   }
 }
 

@@ -336,7 +336,6 @@ export function WorkspaceView({ workspace, terminals, focusedTerminalId, isActiv
               onClose={handleCloseTerminal}
               onRestart={handleRestart}
               workspaceId={workspace.id}
-              lastSdkSessionId={terminal.sdkSessionId || (terminal.id === agentTerminal?.id ? workspace.lastSdkSessionId : undefined)}
             />
           </div>
         ))}

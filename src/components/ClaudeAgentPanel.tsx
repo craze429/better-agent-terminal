@@ -405,13 +405,9 @@ export function ClaudeAgentPanel({ sessionId, cwd, isActive, workspaceId }: Read
         } else if (m.permissionMode) {
           setPermissionMode(m.permissionMode)
         }
-        // Persist SDK session ID so /resume can find it later
+        // Persist SDK session ID per-terminal so /resume and auto-resume can find it
         if (m.sdkSessionId) {
           workspaceStore.setTerminalSdkSessionId(sessionId, m.sdkSessionId)
-          if (workspaceId) {
-            workspaceStore.setLastSdkSessionId(workspaceId, m.sdkSessionId)
-          }
-          workspaceStore.save()
         }
       }),
 
@@ -559,9 +555,16 @@ export function ClaudeAgentPanel({ sessionId, cwd, isActive, workspaceId }: Read
   const handleResumeSelect = useCallback(async (sdkSessionId: string) => {
     setShowResumeList(false)
     setResumeSessions([])
+    // Clear UI immediately so user sees the switch
+    setMessages([])
+    setLoadedArchive([])
+    archivedCountRef.current = 0
+    loadedFromArchiveRef.current = 0
+    setHasMoreArchived(false)
     setStreamingText('')
     setStreamingThinking('')
     setIsStreaming(false)
+    setSessionMeta(null)
     // Reset the started guard so the new session can start
     startedSessions.delete(sessionId)
     sessionStartedRef.current = false
@@ -569,10 +572,7 @@ export function ClaudeAgentPanel({ sessionId, cwd, isActive, workspaceId }: Read
     historyLoadedRef.current = true
     await window.electronAPI.claude.resumeSession(sessionId, sdkSessionId, cwd)
     workspaceStore.setTerminalSdkSessionId(sessionId, sdkSessionId)
-    if (workspaceId) {
-      workspaceStore.setLastSdkSessionId(workspaceId, sdkSessionId)
-    }
-  }, [sessionId, cwd, workspaceId])
+  }, [sessionId, cwd])
 
   const clearInput = useCallback(() => {
     inputValueRef.current = ''
@@ -2275,13 +2275,21 @@ export function ClaudeAgentPanel({ sessionId, cwd, isActive, workspaceId }: Read
         <div className="claude-statusline">
           <span
             className="claude-statusline-item claude-statusline-clickable"
-            onClick={() => {
-              const id = sessionMeta?.sdkSessionId || sessionId
-              navigator.clipboard.writeText(id)
+            onClick={async () => {
+              setResumeLoading(true)
+              setShowResumeList(true)
+              try {
+                const sessions = await window.electronAPI.claude.listSessions(cwd)
+                setResumeSessions(sessions || [])
+              } catch {
+                setResumeSessions([])
+              } finally {
+                setResumeLoading(false)
+              }
             }}
             title={sessionMeta?.sdkSessionId
-              ? `SDK Session: ${sessionMeta.sdkSessionId}\nPanel: ${sessionId}\nClick to copy SDK session ID`
-              : `Panel: ${sessionId}\nClick to copy`
+              ? `SDK Session: ${sessionMeta.sdkSessionId}\nPanel: ${sessionId}\nClick to resume a session`
+              : `Panel: ${sessionId}\nClick to resume a session`
             }
           >
             {sessionMeta?.sdkSessionId

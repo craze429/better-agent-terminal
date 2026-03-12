@@ -9,5 +9,8 @@ release/
 .envrc
 .env.local
 
+# Windows reserved device names (accidentally created by /dev/null redirects)
+nul
+
 # Diagnosis reports
 tests/*.json

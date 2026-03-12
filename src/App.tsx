@@ -205,6 +205,11 @@ export default function App() {
     }
     initProfile()
 
+    // Listen for system resume from sleep/hibernate — refresh remote connection status
+    const unsubSystemResume = window.electronAPI.system.onResume(() => {
+      window.electronAPI.remote.clientStatus().then(s => setIsRemoteConnected(s.connected))
+    })
+
     // Listen for workspace detach/reattach events (main window only)
     const unsubDetach = window.electronAPI.workspace.onDetached((wsId) => {
       setDetachedIds(prev => new Set(prev).add(wsId))
@@ -220,6 +225,7 @@ export default function App() {
     return () => {
       unsubscribe()
       unsubscribeOutput()
+      unsubSystemResume()
       unsubDetach()
       unsubReattach()
     }

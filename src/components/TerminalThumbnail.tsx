@@ -5,7 +5,13 @@ import { settingsStore } from '../stores/settings-store'
 import { getAgentPreset } from '../types/agent-presets'
 
 // Global preview cache - persists across component unmounts
+const MAX_PREVIEW_CACHE = 100
 const previewCache = new Map<string, string>()
+
+/** Remove a terminal's preview from the cache (call when terminal is destroyed) */
+export function clearPreviewCache(terminalId: string) {
+  previewCache.delete(terminalId)
+}
 
 // Strip all ANSI escape sequences and problematic characters
 const stripAnsi = (str: string): string => {
@@ -39,6 +45,14 @@ const setupGlobalListener = () => {
   if (globalListenerSetup) return
   globalListenerSetup = true
 
+  // Evict oldest entries if cache is too large
+  const evictIfNeeded = () => {
+    if (previewCache.size > MAX_PREVIEW_CACHE) {
+      const firstKey = previewCache.keys().next().value
+      if (firstKey) previewCache.delete(firstKey)
+    }
+  }
+
   // PTY output for regular terminals
   window.electronAPI.pty.onOutput((id, data) => {
     const prev = previewCache.get(id) || ''
@@ -47,6 +61,7 @@ const setupGlobalListener = () => {
     const cleaned = stripAnsi(combined)
     const lines = cleaned.split('\n').slice(-8)
     previewCache.set(id, lines.join('\n'))
+    evictIfNeeded()
   })
 
   // Claude agent messages for agent terminal previews

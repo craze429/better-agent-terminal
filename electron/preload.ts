@@ -215,6 +215,13 @@ const electronAPI = {
     testConnection: (host: string, port: number, token: string) =>
       ipcRenderer.invoke('remote:test-connection', host, port, token) as Promise<{ ok: boolean }>,
   },
+  system: {
+    onResume: (callback: () => void) => {
+      const handler = () => callback()
+      ipcRenderer.on('system:resume', handler)
+      return () => ipcRenderer.removeListener('system:resume', handler)
+    },
+  },
   snippet: {
     getAll: () => ipcRenderer.invoke('snippet:getAll'),
     getById: (id: number) => ipcRenderer.invoke('snippet:getById', id),

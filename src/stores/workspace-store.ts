@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid'
 import type { Workspace, TerminalInstance, AppState } from '../types'
 import { AgentPresetId, getAgentPreset } from '../types/agent-presets'
+import { clearPreviewCache } from '../components/TerminalThumbnail'
 
 type Listener = () => void
 
@@ -201,6 +202,7 @@ class WorkspaceStore {
   }
 
   removeTerminal(id: string): void {
+    clearPreviewCache(id)
     const terminals = this.state.terminals.filter(t => t.id !== id)
 
     this.state = {

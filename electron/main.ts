@@ -12,6 +12,14 @@ import { PROXIED_CHANNELS } from './remote/protocol'
 import { RemoteServer } from './remote/remote-server'
 import { RemoteClient } from './remote/remote-client'
 
+// Global error handlers — prevent silent crashes in main process
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught exception:', error)
+})
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled rejection:', reason)
+})
+
 // GPU / DWM safety — reduce GPU compositing overhead to prevent DWM hangs during resize
 app.commandLine.appendSwitch('disable-gpu-compositing')
 
@@ -372,8 +380,9 @@ function registerProxiedHandlers() {
   })
   registerHandler('git:log', async (cwd: string, count: number = 50) => {
     try {
-      const { execSync } = await import('child_process')
-      const raw = execSync(`git log --pretty=format:"%H||%an||%ai||%s" -n ${count}`, { cwd, encoding: 'utf-8', timeout: 5000 }).trim()
+      const { execFileSync } = await import('child_process')
+      const safeCount = Math.max(1, Math.min(Math.floor(Number(count)) || 50, 500))
+      const raw = execFileSync('git', ['log', `--pretty=format:%H||%an||%ai||%s`, '-n', String(safeCount)], { cwd, encoding: 'utf-8', timeout: 5000 }).trim()
       if (!raw) return []
       return raw.split('\n').map(line => {
         const parts = line.split('||')
@@ -383,17 +392,21 @@ function registerProxiedHandlers() {
   })
   registerHandler('git:diff', async (cwd: string, commitHash?: string, filePath?: string) => {
     try {
-      const { execSync } = await import('child_process')
-      let cmd = (commitHash && commitHash !== 'working') ? `git diff ${commitHash}~1..${commitHash}` : 'git diff HEAD'
-      if (filePath) cmd += ` -- "${filePath}"`
-      return execSync(cmd, { cwd, encoding: 'utf-8', timeout: 10000, maxBuffer: 1024 * 1024 * 5 })
+      const { execFileSync } = await import('child_process')
+      const args = commitHash && commitHash !== 'working'
+        ? ['diff', `${commitHash}~1..${commitHash}`]
+        : ['diff', 'HEAD']
+      if (filePath) args.push('--', filePath)
+      return execFileSync('git', args, { cwd, encoding: 'utf-8', timeout: 10000, maxBuffer: 1024 * 1024 * 5 })
     } catch { return '' }
   })
   registerHandler('git:diff-files', async (cwd: string, commitHash?: string) => {
     try {
-      const { execSync } = await import('child_process')
-      const cmd = (commitHash && commitHash !== 'working') ? `git diff --name-status ${commitHash}~1..${commitHash}` : 'git diff --name-status HEAD'
-      const raw = execSync(cmd, { cwd, encoding: 'utf-8', timeout: 5000 })
+      const { execFileSync } = await import('child_process')
+      const args = commitHash && commitHash !== 'working'
+        ? ['diff', '--name-status', `${commitHash}~1..${commitHash}`]
+        : ['diff', '--name-status', 'HEAD']
+      const raw = execFileSync('git', args, { cwd, encoding: 'utf-8', timeout: 5000 })
       if (!raw.trim()) return []
       return raw.trim().split('\n').map(line => {
         const tab = line.indexOf('\t')
@@ -608,6 +621,16 @@ function registerLocalHandlers() {
       width: 900, height: 700, minWidth: 600, minHeight: 400,
       webPreferences: { preload: path.join(__dirname, 'preload.js'), nodeIntegration: false, contextIsolation: true },
       frame: true, titleBarStyle: 'default', icon: path.join(__dirname, '../assets/icon.ico')
+    })
+    // Throttle resize to reduce DWM pressure on Windows (same as main window)
+    let lastDetachedResize = 0
+    detachedWin.on('will-resize', (event) => {
+      const now = Date.now()
+      if (now - lastDetachedResize < 32) {
+        event.preventDefault()
+      } else {
+        lastDetachedResize = now
+      }
     })
     detachedWindows.set(workspaceId, detachedWin)
     const urlParam = `?detached=${encodeURIComponent(workspaceId)}`

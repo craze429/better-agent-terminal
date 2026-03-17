@@ -15,6 +15,7 @@ export interface ClaudeToolCall {
   input: Record<string, unknown>
   status: 'running' | 'completed' | 'error'
   result?: string
+  description?: string
   denyReason?: string
   denied?: boolean
   parentToolUseId?: string

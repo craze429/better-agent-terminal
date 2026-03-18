@@ -2665,8 +2665,8 @@ export function ClaudeAgentPanel({ sessionId, cwd, isActive, workspaceId }: Read
         )
       })()}
 
-      {/* Status line */}
-      <div className="claude-statuslines">
+      {/* Status line — always visible, visually attached to input-area when present */}
+      <div className={`claude-statusline-bar${!pendingPermission && !pendingQuestion && !showResumeList && !showModelList ? ' attached' : ''}`}>
         <div className="claude-statusline">
           {/* Session info group */}
           <span

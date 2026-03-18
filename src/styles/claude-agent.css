@@ -977,9 +977,10 @@
 .claude-input-area {
   display: flex;
   flex-direction: column;
-  margin: 0 12px 12px;
+  margin: 0 12px 0;
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
+  border-bottom: none;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
   background: var(--bg-secondary);
   overflow: hidden;
   transition: border-color 0.15s;
@@ -1601,11 +1602,18 @@
   font-style: italic;
 }
 
-/* Status Lines */
-.claude-statuslines {
+/* Status Line Bar — attached to input-area when visible, standalone otherwise */
+.claude-statusline-bar {
   flex-shrink: 0;
-  border-top: 1px solid var(--border-color);
+  margin: 0 12px 12px;
   background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+}
+
+.claude-statusline-bar.attached {
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
+  margin-top: 0;
 }
 
 .claude-statusline {

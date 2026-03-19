@@ -368,6 +368,15 @@ export class ClaudeAgentManager {
           return { behavior: 'allow', updatedInput: input as Record<string, unknown> }
         }
 
+        // In acceptEdits mode, auto-approve file edit and read-only tools
+        if (session.permissionMode === 'acceptEdits') {
+          const autoApprovedTools = ['Write', 'Edit', 'NotebookEdit', 'Read', 'Glob', 'Grep']
+          if (autoApprovedTools.includes(toolName)) {
+            return { behavior: 'allow', updatedInput: input as Record<string, unknown> }
+          }
+          // All other tools (Bash, Agent, etc.) still require user confirmation
+        }
+
         // For all other tools, send permission request to frontend
         return new Promise((resolve) => {
           session.pendingPermissions.set(opts.toolUseID, { resolve })
@@ -1039,11 +1048,21 @@ export class ClaudeAgentManager {
     return { ...session.metadata, permissionMode: session.permissionMode }
   }
 
-  resolvePermission(sessionId: string, toolUseId: string, result: { behavior: string; updatedInput?: Record<string, unknown>; message?: string }): boolean {
+  resolvePermission(sessionId: string, toolUseId: string, result: { behavior: string; updatedInput?: Record<string, unknown>; updatedPermissions?: unknown[]; message?: string; dontAskAgain?: boolean }): boolean {
     const session = this.sessions.get(sessionId)
     if (!session) return false
     const pending = session.pendingPermissions.get(toolUseId)
     if (!pending) return false
+    // Apply setMode directives from updatedPermissions (e.g. "don't ask again" → acceptEdits)
+    if (result.behavior === 'allow' && result.updatedPermissions) {
+      for (const perm of result.updatedPermissions) {
+        const p = perm as { type?: string; mode?: string }
+        if (p.type === 'setMode' && p.mode) {
+          session.permissionMode = p.mode as AppPermissionMode
+          this.send('claude:modeChange', sessionId, session.permissionMode)
+        }
+      }
+    }
     pending.resolve(result)
     session.pendingPermissions.delete(toolUseId)
     return true

@@ -66,6 +66,9 @@ app.commandLine.appendSwitch('disable-gpu-shader-disk-cache')
 // causes Chromium to block the renderer for 4+ seconds on Windows during I/O recovery.
 app.commandLine.appendSwitch('disable-features', 'ServiceWorker')
 
+// Set app name (shown in dock/taskbar instead of "Electron" during dev)
+app.setName('BetterAgentTerminal')
+
 // Set AppUserModelId for Windows taskbar pinning (must be before app.whenReady)
 if (process.platform === 'win32') {
   app.setAppUserModelId('org.tonyq.better-agent-terminal')
